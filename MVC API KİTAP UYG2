@@ -1,0 +1,350 @@
+// -----------------------------------------------------------
+// --- Komple ASP.NET Core MVC Uygulaması (Özet Tek Dosya) ---
+// -----------------------------------------------------------
+
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.Threading.Tasks;
+using Newtonsoft.Json;
+using System.Net.Http;
+
+namespace YourNamespace
+{
+    // --- MODELLER ---
+
+    // Identity Kullanıcı Modeli
+    public class ApplicationUser : IdentityUser
+    {
+        public ICollection<Order> Orders { get; set; }
+        public ICollection<Favorite> Favorites { get; set; }
+    }
+
+    // Kategori
+    public class Category
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public ICollection<Book> Books { get; set; }
+    }
+
+    // Kitap
+    public class Book
+    {
+        public int Id { get; set; }
+        public string Title { get; set; }
+        public string ImageUrl { get; set; }
+        public decimal Price { get; set; }
+        public string Description { get; set; }
+        public int CategoryId { get; set; }
+        public Category Category { get; set; }
+    }
+
+    // Sipariş
+    public class Order
+    {
+        public int Id { get; set; }
+        public string UserId { get; set; }
+        public ApplicationUser User { get; set; }
+        public DateTime OrderDate { get; set; }
+        public ICollection<OrderDetail> OrderDetails { get; set; }
+    }
+
+    // Sipariş Detayları
+    public class OrderDetail
+    {
+        public int Id { get; set; }
+        public int OrderId { get; set; }
+        public Order Order { get; set; }
+        public int BookId { get; set; }
+        public Book Book { get; set; }
+        public int Quantity { get; set; }
+    }
+
+    // Favoriler
+    public class Favorite
+    {
+        public int Id { get; set; }
+        public string UserId { get; set; }
+        public ApplicationUser User { get; set; }
+        public int BookId { get; set; }
+        public Book Book { get; set; }
+    }
+
+    // --- DB CONTEXT ---
+
+    public class AppDbContext : IdentityDbContext<ApplicationUser>
+    {
+        public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+
+        public DbSet<Category> Categories { get; set; }
+        public DbSet<Book> Books { get; set; }
+        public DbSet<Order> Orders { get; set; }
+        public DbSet<OrderDetail> OrderDetails { get; set; }
+        public DbSet<Favorite> Favorites { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder builder)
+        {
+            base.OnModelCreating(builder);
+            // İlgili ek ayarlar buraya
+        }
+    }
+
+    // --- VERİ TOHUMLAMA ---
+
+    public static class DataSeeder
+    {
+        public static async Task SeedRolesAndAdmin(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager)
+        {
+            if (!await roleManager.RoleExistsAsync("Admin"))
+                await roleManager.CreateAsync(new IdentityRole("Admin"));
+
+            if (!await roleManager.RoleExistsAsync("User"))
+                await roleManager.CreateAsync(new IdentityRole("User"));
+
+            var adminEmail = "admin@example.com";
+            var adminUser = await userManager.FindByEmailAsync(adminEmail);
+
+            if (adminUser == null)
+            {
+                var user = new ApplicationUser { UserName = adminEmail, Email = adminEmail };
+                var result = await userManager.CreateAsync(user, "Admin123!");
+                if (result.Succeeded)
+                {
+                    await userManager.AddToRoleAsync(user, "Admin");
+                }
+            }
+        }
+    }
+
+    // --- ACCOUNT CONTROLLER ---
+
+    public class AccountController : Controller
+    {
+        private readonly SignInManager<ApplicationUser> _signInManager;
+
+        public AccountController(SignInManager<ApplicationUser> signInManager)
+        {
+            _signInManager = signInManager;
+        }
+
+        [HttpGet]
+        public IActionResult Login(string returnUrl = null)
+        {
+            ViewData["ReturnUrl"] = returnUrl;
+            return View();
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> Login(LoginViewModel model, string returnUrl = null)
+        {
+            ViewData["ReturnUrl"] = returnUrl;
+            if (!ModelState.IsValid)
+                return View(model);
+
+            var result = await _signInManager.PasswordSignInAsync(model.Email, model.Password, model.RememberMe, false);
+            if (result.Succeeded)
+                return RedirectToLocal(returnUrl);
+
+            ModelState.AddModelError("", "Geçersiz giriş.");
+            return View(model);
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> Logout()
+        {
+            await _signInManager.SignOutAsync();
+            return RedirectToAction("Login");
+        }
+
+        private IActionResult RedirectToLocal(string returnUrl)
+        {
+            if (Url.IsLocalUrl(returnUrl))
+                return Redirect(returnUrl);
+            else
+                return RedirectToAction("Index", "Home");
+        }
+    }
+
+    public class LoginViewModel
+    {
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; }
+        [Required]
+        [DataType(DataType.Password)]
+        public string Password { get; set; }
+        public bool RememberMe { get; set; }
+    }
+
+    // --- ADMIN CONTROLLER ---
+
+    [Microsoft.AspNetCore.Authorization.Authorize(Roles = "Admin")]
+    public class AdminController : Controller
+    {
+        private readonly AppDbContext _context;
+
+        public AdminController(AppDbContext context)
+        {
+            _context = context;
+        }
+
+        public IActionResult Index() => View();
+
+        public async Task<IActionResult> Categories()
+        {
+            var categories = await _context.Categories.ToListAsync();
+            return View(categories);
+        }
+
+        public IActionResult CreateCategory() => View();
+
+        [HttpPost]
+        public async Task<IActionResult> CreateCategory(Category category)
+        {
+            if (ModelState.IsValid)
+            {
+                _context.Categories.Add(category);
+                await _context.SaveChangesAsync();
+                return RedirectToAction(nameof(Categories));
+            }
+            return View(category);
+        }
+
+        // Diğer CRUD işlemleri eklenebilir
+    }
+
+    // --- HOME CONTROLLER ---
+
+    public class HomeController : Controller
+    {
+        private readonly HttpClient _httpClient;
+
+        public HomeController(IHttpClientFactory factory)
+        {
+            _httpClient = factory.CreateClient();
+            _httpClient.BaseAddress = new Uri("https://localhost:5001/"); // API adresini değiştir
+        }
+
+        public async Task<IActionResult> Index()
+        {
+            var response = await _httpClient.GetAsync("api/books");
+            var json = await response.Content.ReadAsStringAsync();
+            var books = JsonConvert.DeserializeObject<List<Book>>(json);
+            return View(books);
+        }
+    }
+
+    // --- BOOK CONTROLLER ---
+
+    public class BookController : Controller
+    {
+        private readonly HttpClient _httpClient;
+
+        public BookController(IHttpClientFactory factory)
+        {
+            _httpClient = factory.CreateClient();
+            _httpClient.BaseAddress = new Uri("https://localhost:5001/");
+        }
+
+        public async Task<IActionResult> Details(int id)
+        {
+            var response = await _httpClient.GetAsync($"api/books/{id}");
+            if (!response.IsSuccessStatusCode) return NotFound();
+
+            var json = await response.Content.ReadAsStringAsync();
+            var book = JsonConvert.DeserializeObject<Book>(json);
+            return View(book);
+        }
+    }
+
+    // --- PROGRAM ---
+
+    public class Program
+    {
+        public static async Task Main(string[] args)
+        {
+            var builder = WebApplication.CreateBuilder(args);
+
+            // DB Bağlantısı
+            builder.Services.AddDbContext<AppDbContext>(options =>
+                options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+            // Identity ayarları
+            builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
+            {
+                options.Password.RequireDigit = false;
+                options.Password.RequiredLength = 6;
+                options.Password.RequireNonAlphanumeric = false;
+                options.Password.RequireUppercase = false;
+            })
+            .AddEntityFrameworkStores<AppDbContext>()
+            .AddDefaultTokenProviders();
+
+            builder.Services.ConfigureApplicationCookie(options =>
+            {
+                options.LoginPath = "/Account/Login";
+                options.AccessDeniedPath = "/Account/AccessDenied";
+            });
+
+            builder.Services.AddHttpClient();
+            builder.Services.AddControllersWithViews();
+
+            var app = builder.Build();
+
+            app.UseStaticFiles();
+            app.UseRouting();
+            app.UseAuthentication();
+            app.UseAuthorization();
+
+            app.MapControllerRoute(
+                name: "default",
+                pattern: "{controller=Home}/{action=Index}/{id?}");
+
+            // Veri tohumlama
+            using (var scope = app.Services.CreateScope())
+            {
+                var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+                var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+                await DataSeeder.SeedRolesAndAdmin(userManager, roleManager);
+            }
+
+            await app.RunAsync();
+        }
+    }
+}
+
+
+
+Uygulamanın Amacı ve Kullanımı
+Bu uygulama, kitap satışı ve yönetimi için tasarlanmış bir ASP.NET Core MVC + REST API projesidir.
+
+REST API: Kitaplar, kategoriler, kullanıcılar, siparişler ve favoriler gibi verileri yönetir. Bu API, veritabanıyla doğrudan iletişim kurar.
+
+MVC Uygulaması: Kullanıcı arayüzü sağlar. REST API ile haberleşerek kitapları, kategorileri gösterir; kullanıcıların sepet işlemleri, favoriler, sipariş oluşturma gibi işlemlerini yapmasını sağlar.
+
+Admin Paneli: Yönetici için kullanıcı, kitap, kategori, sipariş ve favori yönetimi (CRUD işlemleri) sunar.
+
+Kimlik Doğrulama: Identity Framework kullanılarak kullanıcı kayıt/giriş işlemleri ve rol bazlı yetkilendirme yapılır (admin ve normal kullanıcı).
+
+
+
+
+
+Amaç: Kitap satış ve yönetim sistemini API ve MVC ile inşa etmek.
+
+Teknolojiler: ASP.NET Core MVC, Entity Framework Core, Identity Framework, REST API, Bootstrap.
+
+Özellikler: Kullanıcı/kategori/kitap/sipariş/favori yönetimi, rol tabanlı admin paneli, responsive tasarım, session ile sepet yönetimi.
+
+Kullanılan temel komutlar: DbSet ile model tanımlama, Controller'da HTTP metotları ([HttpGet]), HttpClient ile API çağrısı, Razor View kullanımı, Identity ile kullanıcı yönetimi.
+
+
+
+
