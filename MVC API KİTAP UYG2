@@ -1,5 +1,5 @@
 // -----------------------------------------------------------
-// --- Komple ASP.NET Core MVC Uygulaması (Özet Tek Dosya) ---
+// --- Komple ASP.NET Core MVC Uygulaması---
 // -----------------------------------------------------------
 
 using Microsoft.AspNetCore.Builder;
